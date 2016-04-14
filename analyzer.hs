@@ -47,4 +47,13 @@ astUp (rhs, CompoundAssignCrumb lhs op:xs) = (CompoundAssign lhs op rhs, xs)
 astUp (first, BinaryExprCrumb 0 op second:xs) = (BinaryExpr first op second, xs)
 astUp (second, BinaryExprCrumb 1 op first:xs) = (BinaryExpr first op second, xs)
 
+makeBlock :: Ast -> Ast -> Ast
+makeBlock x (Block xs) = Block (x:xs)
+makeBlock (Block xs) x = Block (xs++[x])
+makeBlock x y = Block [x, y]
 
+unrollLoop :: Integer -> AstZipper -> AstZipper
+unrollLoop 1 x = x
+unrollLoop n (While cond body, xs) | n > 1 = (While cond (repeatBody n), xs)
+    where repeatBody 1 = body
+          repeatBody n = makeBlock body (If cond (repeatBody (n-1)))
