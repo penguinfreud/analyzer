@@ -1,6 +1,20 @@
-data Ast = Block [Ast] | If Ast Ast | IfElse Ast Ast Ast | While Ast Ast | Assign LHS Ast | CompoundAssign LHS BinaryOp Ast | BinaryExpr Ast BinaryOp Ast | Lit Int | Primary LHS deriving (Show)
-data LHS = Var String | Member LHS Ast deriving (Show)
+data Ast = Block {blockBody::[Ast]} |
+    If {cond::Ast, seq::Ast} |
+    IfElse {cond::Ast, seq::Ast, alt::Ast} |
+    While {cond::Ast, body::Ast} |
+    Break {depth::Int} |
+    Continue {depth::Int} |
+    Assign {lhs::LHS, rhs::Ast} |
+    CompoundAssign {lhs::LHS, op::BinaryOp, rhs::Ast} |
+    BinaryExpr {first::Ast, op::BinaryOp, second::Ast} |
+    Lit {value::Int} |
+    Primary {primary::LHS} |
+    Empty |
+    Decl {declVar::String, declType::Type} deriving (Show)
+data LHS = Var {var::String} |
+    Member {obj::LHS, index::Ast} deriving (Show)
 data BinaryOp = Add | Mult | Divide | Less | Greater deriving (Show)
+data Type = NumType | Array Type | Function Type Type | Struct [(String, Type)] deriving (Show)
 
 data AstCrumb = BlockCrumb [Ast] [Ast] | IfCrumb Int Ast | IfElseCrumb Int Ast Ast | WhileCrumb Int Ast | AssignCrumb LHS | CompoundAssignCrumb LHS BinaryOp | BinaryExprCrumb Int BinaryOp Ast deriving (Show)
 type AstZipper = (Ast, [AstCrumb])
@@ -47,13 +61,17 @@ astUp (rhs, CompoundAssignCrumb lhs op:xs) = (CompoundAssign lhs op rhs, xs)
 astUp (first, BinaryExprCrumb 0 op second:xs) = (BinaryExpr first op second, xs)
 astUp (second, BinaryExprCrumb 1 op first:xs) = (BinaryExpr first op second, xs)
 
-makeBlock :: Ast -> Ast -> Ast
-makeBlock x (Block xs) = Block (x:xs)
-makeBlock (Block xs) x = Block (xs++[x])
-makeBlock x y = Block [x, y]
+astRoot :: AstZipper -> Ast
+astRoot (ast, []) = ast
+astRoot zipper = astRoot $ astUp zipper
 
-unrollLoop :: Integer -> AstZipper -> AstZipper
+unrollLoop :: Int -> AstZipper -> AstZipper
 unrollLoop 1 x = x
-unrollLoop n (While cond body, xs) | n > 1 = (While cond (repeatBody n), xs)
-    where repeatBody 1 = body
-          repeatBody n = makeBlock body (If cond (repeatBody (n-1)))
+unrollLoop n (While cond body, xs) | n > 1 = (While cond (repeatBody 1), xs)
+    where repeatBody i | i == n = body
+          repeatBody i = Block [body, IfElse cond (repeatBody (i+1)) (Break (i + i))]
+
+-- cse :: AstZipper -> AstZipper
+-- dce :: AstZipper -> AstZipper
+
+main = putStrLn "hello"
