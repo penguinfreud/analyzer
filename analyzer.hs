@@ -1,77 +1,75 @@
-data Ast = Block {blockBody::[Ast]} |
-    If {cond::Ast, seq::Ast} |
-    IfElse {cond::Ast, seq::Ast, alt::Ast} |
-    While {cond::Ast, body::Ast} |
-    Break {depth::Int} |
-    Continue {depth::Int} |
-    Assign {lhs::LHS, rhs::Ast} |
-    CompoundAssign {lhs::LHS, op::BinaryOp, rhs::Ast} |
-    BinaryExpr {first::Ast, op::BinaryOp, second::Ast} |
+data Ast = Ast {operator::Operator, operands::[Ast]} |
+    Var {name::String} |
     Lit {value::Int} |
-    Primary {primary::LHS} |
-    Empty |
-    Decl {declVar::String, declType::Type} deriving (Show)
-data LHS = Var {var::String} |
-    Member {obj::LHS, index::Ast} deriving (Show)
-data BinaryOp = Add | Mult | Divide | Less | Greater deriving (Show)
+    Empty deriving (Show)
+data Operator = If | While | DoWhile | Block | Break Int | Continue Int | Return | Member | Assign | Add | Sub | Mult | Divide deriving (Show)
 data Type = NumType | Array Type | Function Type Type | Struct [(String, Type)] deriving (Show)
 
-data AstCrumb = BlockCrumb [Ast] [Ast] | IfCrumb Int Ast | IfElseCrumb Int Ast Ast | WhileCrumb Int Ast | AssignCrumb LHS | CompoundAssignCrumb LHS BinaryOp | BinaryExprCrumb Int BinaryOp Ast deriving (Show)
+data AstCrumb = AstCrumb Operator [Ast] [Ast] deriving (Show)
 type AstZipper = (Ast, [AstCrumb])
 
-nthStmt :: Int -> AstZipper -> AstZipper
-nthStmt n (Block body, xs) = (body !! n, BlockCrumb (take n body) (drop (n+1) body):xs)
+astFirst :: AstZipper -> AstZipper
+astFirst x@(Empty, _) = x
+astFirst x@(Var _, _) = x
+astFirst x@(Lit _, _) = x
+astFirst x@(Ast (Break _) _, _) = x
+astFirst x@(Ast (Continue _) _, _) = x
+astFirst x@(Ast Return _, _) = x
+astFirst (Ast Assign [Ast Member [obj, index], rhs], xs) = astFirst (obj, AstCrumb Member [] [index]:AstCrumb Assign [] [rhs]:xs)
+astFirst (Ast Assign [lhs, rhs], xs) = astFirst (rhs, AstCrumb Assign [lhs] []:xs)
+astFirst (Ast operator (first:ys), xs) = astFirst (first, AstCrumb operator [] ys:xs)
 
-gotoCond :: AstZipper -> AstZipper
-gotoCond (If cond seq, xs) = (cond, IfCrumb 0 seq:xs)
-gotoCond (IfElse cond seq alt, xs) = (cond, IfElseCrumb 0 seq alt:xs)
-gotoCond (While cond body, xs) = (cond, WhileCrumb 0 body:xs)
-
-gotoSeq :: AstZipper -> AstZipper
-gotoSeq (If cond seq, xs) = (seq, IfCrumb 1 cond:xs)
-gotoSeq (IfElse cond seq alt, xs) = (seq, IfElseCrumb 1 cond alt:xs)
-
-gotoAlt :: AstZipper -> AstZipper
-gotoAlt (IfElse cond seq alt, xs) = (alt, IfElseCrumb 2 cond seq:xs)
-
-gotoBody :: AstZipper -> AstZipper
-gotoBody (While cond body, xs) = (body, WhileCrumb 1 cond:xs)
-
-gotoAssign :: AstZipper -> AstZipper
-gotoAssign (Assign lhs rhs, xs) = (rhs, AssignCrumb lhs:xs)
-gotoAssign (CompoundAssign lhs op rhs, xs) = (rhs, CompoundAssignCrumb lhs op:xs)
-
-gotoFirstOperand :: AstZipper -> AstZipper
-gotoFirstOperand (BinaryExpr first op second, xs) = (first, BinaryExprCrumb 0 op second:xs)
-
-gotoSecondOperand :: AstZipper -> AstZipper
-gotoSecondOperand (BinaryExpr first op second, xs) = (second, BinaryExprCrumb 1 op first:xs)
+reverseAppend :: [a] -> [a] -> [a]
+reverseAppend [] rs = rs
+reverseAppend (l:ls) rs = reverseAppend ls (l:rs)
 
 astUp :: AstZipper -> AstZipper
-astUp (ast, BlockCrumb ls rs:xs) = (Block (ls ++ [ast] ++ rs), xs)
-astUp (cond, IfCrumb 0 seq:xs) = (If cond seq, xs)
-astUp (seq, IfCrumb 1 cond:xs) = (If cond seq, xs)
-astUp (cond, IfElseCrumb 0 seq alt:xs) = (IfElse cond seq alt, xs)
-astUp (seq, IfElseCrumb 1 cond alt:xs) = (IfElse cond seq alt, xs)
-astUp (alt, IfElseCrumb 2 cond seq:xs) = (IfElse cond seq alt, xs)
-astUp (cond, WhileCrumb 0 body:xs) = (While cond body, xs)
-astUp (body, WhileCrumb 1 cond:xs) = (While cond body, xs)
-astUp (rhs, AssignCrumb lhs:xs) = (Assign lhs rhs, xs)
-astUp (rhs, CompoundAssignCrumb lhs op:xs) = (CompoundAssign lhs op rhs, xs)
-astUp (first, BinaryExprCrumb 0 op second:xs) = (BinaryExpr first op second, xs)
-astUp (second, BinaryExprCrumb 1 op first:xs) = (BinaryExpr first op second, xs)
+astUp x@(ast, []) = x
+astUp (ast, AstCrumb operator ls rs:xs) = (Ast operator (reverseAppend ls (ast:rs)), xs)
 
-astRoot :: AstZipper -> Ast
-astRoot (ast, []) = ast
-astRoot zipper = astRoot $ astUp zipper
+astUpN :: Int -> AstZipper -> AstZipper
+astUpN 0 x = x
+astUpN n x = astUpN (n-1) (astUp x)
 
-unrollLoop :: Int -> AstZipper -> AstZipper
-unrollLoop 1 x = x
-unrollLoop n (While cond body, xs) | n > 1 = (While cond (repeatBody 1), xs)
-    where repeatBody i | i == n = body
-          repeatBody i = Block [body, IfElse cond (repeatBody (i+1)) (Break (i + i))]
+astRoot :: AstZipper -> AstZipper
+astRoot x@(_, []) = x
+astRoot x = astRoot $ astUp x
 
 -- cse :: AstZipper -> AstZipper
 -- dce :: AstZipper -> AstZipper
+hasNext :: AstZipper -> Bool
+hasNext (_, []) = False
+hasNext _ = True
+
+getNext :: AstZipper -> [AstZipper]
+getNext (cond, AstCrumb If [] [seq]:xs) = [
+    astFirst (seq, AstCrumb If [cond] []:xs),
+    (Ast If [cond, seq], xs)]
+getNext (cond, AstCrumb If [] [seq, alt]:xs) = [
+    astFirst (seq, AstCrumb If [cond] [alt]:xs),
+    astFirst (alt, AstCrumb If [cond, seq] []:xs)]
+getNext (seq, AstCrumb If [cond] [alt]:xs) = [(Ast If [cond, seq, alt], xs)]
+getNext (alt, AstCrumb If [cond, seq] []:xs) = [(Ast If [cond, seq, alt], xs)]
+getNext (cond, AstCrumb While [] [body]:xs) = [
+    astFirst (body, AstCrumb While [cond] []:xs),
+    (Ast While [cond, body], xs)]
+getNext (body, AstCrumb While [cond] []:xs) = [astFirst (cond, AstCrumb While [] [body]:xs)]
+getNext (body, AstCrumb DoWhile [] [cond]:xs) = [astFirst (cond, AstCrumb DoWhile [body] []:xs)]
+getNext (cond, AstCrumb DoWhile [body] []:xs) = [
+    astFirst (body, AstCrumb DoWhile [] [cond]:xs),
+    (Ast DoWhile [body, cond], xs)]
+getNext x@(Ast Return val, xs) = [astRoot x]
+getNext x@(Ast (Break depth) _, xs) = [astUpN depth x]
+getNext x@(Ast (Continue depth) _, xs) = let (block, ys) = astUpN depth x
+                                         in case block of (Ast While [cond, body]) -> [astFirst (cond, AstCrumb While [] [body]:ys)]
+                                                          (Ast DoWhile [body, cond]) -> [astFirst (cond, AstCrumb DoWhile [body] []:ys)]
+getNext (x, AstCrumb op ls []:xs) = [(Ast op (reverseAppend ls [x]), xs)]
+getNext (x, AstCrumb op ls (r:rs):xs) = [astFirst (r, AstCrumb op (x:ls) rs:xs)]
+
+unrollLoop :: Int -> AstZipper -> AstZipper
+unrollLoop 1 x = x
+unrollLoop n (Ast While [cond, body], xs) | n > 1 = (Ast While [cond, repeatBody 1], xs)
+    where repeatBody i | i == n = body
+          repeatBody i = Ast Block [body, Ast If [cond, repeatBody (i+1), Ast (Break (i + i)) []]]
 
 main = putStrLn "hello"
